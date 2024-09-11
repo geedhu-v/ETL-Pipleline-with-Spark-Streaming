@@ -1,0 +1,43 @@
+import org.apache.spark.ml.Pipeline
+import org.apache.spark.ml.PipelineModel
+import org.apache.spark.ml.feature.{RegexTokenizer, StopWordsRemover}
+import org.apache.spark.sql.{SparkSession, DataFrame}
+ 
+val spark = SparkSession.builder.appName("SentimentAnalysisOnlyContent").getOrCreate()
+ 
+val data = spark.read.format("csv")
+.option("header", "true") 
+.load("hdfs:///NewsDataAnalysis/NewsApi_Cleaned.csv")
+
+
+
+
+   // Create a simple tokenizer
+    val tokenizer = new RegexTokenizer()
+      .setInputCol("content")
+      .setOutputCol("words")
+      .setPattern("\\W")
+ 
+    // Remove stop words
+    val stopWordsRemover = new StopWordsRemover()
+      .setInputCol(tokenizer.getOutputCol)
+      .setOutputCol("filteredWords")
+ 
+    // Load pre-trained sentiment analysis model from Spark NLP
+    val sentimentModel = com.johnsnowlabs.nlp.pretrained.PretrainedPipeline("analyze_sentiment", lang = "en")
+ 
+    // Define a pipeline with tokenizer, stop words remover, and the pre-trained sentiment analysis model
+    val pipeline = new Pipeline().setStages(Array(tokenizer, stopWordsRemover, sentimentModel))
+ 
+    // Fit the pipeline to the data
+    val model = pipeline.fit(newsData)
+ 
+    // Make predictions on the data
+    val predictions = model.transform(newsData)
+ 
+    // Show the results
+    predictions.select("id", "content", "sentiment.result").show(truncate = false)
+ 
+    spark.stop()
+  }
+}

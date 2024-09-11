@@ -1,0 +1,75 @@
+##### Sample Code ######
+*******************************************************************
+********* PLEASE REVIEW Spark Streaming videos before hand*********
+*******************************************************************
+--- Many students try to run the code without really understanding the concept of streaming
+--- This will lead to problems
+--- Vidoes are not that long, watch them!
+
+spark-shell --master local 
+
+import org.apache.spark.sql._
+import org.apache.spark.sql.types._ 
+
+// A streaming DataFrame needs a schema (cannot create one without a schema)
+// You can always load a dataset into a static DataFrame and infer the schema
+// For the news articles, you get something like this:
+
+val newsArticleSchema = new StructType(Array(
+StructField("source",
+	StructType(Array(
+		StructField("id",StringType,true),
+		StructField("name",StringType,true))),
+				    true),
+StructField("author",StringType,true),
+StructField("title",StringType,true),
+StructField("description",StringType,true),
+StructField("url",StringType,true),
+StructField("urlToImage",StringType,true),
+StructField("publishedAt",StringType,true),
+StructField("content",StringType,true)))
+
+
+-- Make sure the folder where the data is saved (From Kafka consumer) is correct
+
+val news = spark.readStream.format("json")
+ .schema(newsArticleSchema)
+ .option("path", "file:////home/geedhu92/Received/").load()
+
+-- Note that the checkpoint directory must be empty (or not exist)
+-- If you want to run the streaming a second time, you should delete the directory or use a different directory
+
+val stream = news.writeStream
+    	.format("json")      
+    	.option("checkpointLocation", "file:////home/geedhu92/chkpt")
+    	.outputMode("append")
+    	.option("path", "/BigDataNewsJSON/")
+    	.start()
+
+--- Second stream to send a separate set of data 
+--- run this in a separate spark-shell terminal with prelminary code
+--- Creating a new session (not using default "spark" session)
+
+val spark_hive = SparkSession
+  .builder()
+  .appName("Spark session to save Data for a hive table")
+  .getOrCreate()
+
+
+val news = spark_hive.readStream.format("json")
+ .schema(newsArticleSchema)
+ .option("path", "file:////home/geedhu92/Received/").load()
+
+-- Only selecting simple columns, note that "source" column is nested and so cannot be saved as a csv
+
+val news_cols = news.select($"author", $"description", $"title", $"url", $"content")
+
+
+-- Saving data now as a CSV (cannot do this for the entire news dataframe because some columns are nested)
+
+val stream = news_cols.writeStream
+    	.format("csv")      
+    	.option("checkpointLocation", "file:////home/geedhu92/chkpt11")
+    	.outputMode("append")
+    	.option("path", "/BigDataNewsCSV/")
+    	.start()

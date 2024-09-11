@@ -1,0 +1,140 @@
+############ Code used
+
+
+bin/zkServer.sh start
+
+nohup bin/kafka-server-start etc/kafka/server.properties > /dev/null 2>&1 &
+
+bin/kafka-topics --create --zookeeper localhost:2181 --replication-factor 1 --partitions 3 --topic NewsAnalysis
+
+
+# Analysis
+spark-shell --master local
+val data = spark.read.format("csv").option("header", "true").load("hdfs:///NDA/NewsApi_Cleaned.csv")
+
+###### Producer Code
+
+
+# pip install newsapi
+# pip install newsapi-python
+pip install kafka-python
+'''
+from newsapi import NewsApiClient
+import json
+from kafka import KafkaProducer
+# Get your free API key from https://newsapi.org/, just need to sign up for an account
+key = "1e17f4ca5ff54943a0c2e876fc7349e0"
+# Initialize api endpoint
+newsapi = NewsApiClient(api_key=key)
+# Define the list of media sources
+sources = 'bbc-news,cnn,fox-news,nbc-news,the-guardian-uk,the-new-york-times,the-washington-post,usa-today,independent,daily-mail'
+# /v2/everything
+all_articles = newsapi.get_everything(q='france',
+sources=sources,
+language='en')
+# Print the titles of the articles
+for article in all_articles['articles']:
+print(article['title'])
+producer = KafkaProducer(bootstrap_servers='localhost:9092')
+producer.send('my-news', json.dumps(article).encode('utf-8'))
+##########Consumer Code
+from kafka import KafkaConsumer
+import json
+
+brokers = 'localhost:9092'
+topic = 'NewsAnalysis'
+
+message_list = []
+# Start consuming messages for message in consumer:
+# Decode the message value from bytes to a string 
+decoded_message = message. value. decode ()
+# Parse the JSON-formatted string into a Python object (in this case, a dictionary)
+article = json. loads (decoded message)
+# Add the article to the list
+message
+list. append (article)
+# Optionally, print the received article
+print (f"Received article: {article}")
+with open ('received articles. json''w') as json file:
+	json. dump (message_list, json file, indent=2)
+
+print ("List of received articles has been saved to received articles.json")
+
+###############Data Cleaning
+
+import pandas as pd
+import json
+from pandas import json_normalize
+# Assuming your JSON file is named 'data. ison'
+json_file_path = 'received articles.json'
+# Read the JSON file into a pandas DataFrame
+with open (json_file_path, 'r') as json_file:
+data = json. load (json_file)
+# Convert the JSON data to a DataFrame
+df = json_normalize (data)
+# Making a copy of Original data
+d_orig = df.copy()
+# Optionally, display the DataFrame
+print("Print the first 5 data of the dataframe: \n")
+print(df. head (5))
+print("Unique author values : ", df ["author"]. unique ())
+print("Length of the dataframe :", len (di))
+print("Shape of the Dataframe: ", df. shape)
+col_names = df.columns
+print("Column Names: \n", col_names)
+# Check for Missing Values
+#
+print("Missing values in each column: ",d.isnull ().any ())
+print("Names of the Column that has missing values: \n ",[col for col in df.columns if d[col].isnull().any()])
+print("Number of missing values in each Column: \n", df.isna () -sum())
+# After Analysis deciding to drop the following:
+# 1. Removing the Column 'Author' as it has 70 null values also our aim is to do sentiment analysis and #
+#author field doesn't contribute much for the analysis. Hence Removing the entire column.
+df = df.drop('author', axis =1)
+# 2. Columns urlToImage and source. id has 3 null values, hence removing the rows of the enitre dataframe.
+df = df.dropna()
+print("Shape of the dataframe before cleaning: ",df_orig. shape)
+print("Shape of the dataframe after cleaning: ", df.shape)
+print("Missing values of each column after cleaning: \n", df.isnull().any())
+df = df.rename(columns={'source.id': 'sourceId'})
+df = df.rename(columns={'source.name': 'sourceName'})
+#Remove unwanted space
+df = df.applymap (lambda x: x.strip() if isinstance (x, str) else x)
+df.to_csv(NewsApi_Cleaned.csv',index = False)
+
+
+# Machine Learning Algorithm
+
+import org.apache.spark.ml.Pipeline
+import org.apache.spark.ml.classification.LogisticRegression
+import org.apache.spark.ml.evaluation.BinaryClassificationEvaluator
+import org.apache.spark.ml.feature.{RegexTokenizer, StopWordsRemover, NGram, CountVectorizer, IDF}
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.functions._
+
+val spark = SparkSession.builder.appName("SentimentAnalysis").getOrCreate()
+
+val data = spark.read.format("csv").option("header", "true").load("hdfs:///NDA/NewsApi_Cleaned.csv")
+
+val cleanedData = data.filter(!(col("sourceId") === "[Removed]"))
+
+val negativeWords = Seq("bad","failure","fail","negative","angry","no","off","sad","lose", "lost", "passed", "not", "died", "leave", "left", "injury", "die","loser")
+
+val labeledData = cleanedData.withColumn("label", when(negativeWords.map(kw => col("content").contains(kw)).reduce(_ || _), 0).otherwise(1))
+
+val pipeline = new Pipeline().setStages(Array(
+  new RegexTokenizer().setPattern("[a-zA-Z']+").setGaps(false).setInputCol("content").setOutputCol("words"),
+  new StopWordsRemover().setInputCol("words").setOutputCol("filtered"),
+  new NGram().setN(2).setInputCol("filtered").setOutputCol("ngram-2"),
+  new CountVectorizer().setInputCol("ngram-2").setOutputCol("ngram-2-features"),
+  new IDF().setInputCol("ngram-2-features").setOutputCol("cv2-idf-features"),
+  new LogisticRegression().setLabelCol("label").setFeaturesCol("cv2-idf-features").setMaxIter(10)
+))
+
+val pipelineModel = pipeline.fit(labeledData)
+
+val predictions = pipelineModel.transform(labeledData)
+
+val evaluator = new BinaryClassificationEvaluator().setRawPredictionCol("rawPrediction").setLabelCol("label")
+val accuracy = evaluator.evaluate(predictions)
+println("Accuracy:", accuracy)
